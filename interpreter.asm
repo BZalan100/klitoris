@@ -10,6 +10,7 @@ section .bss
     command_buffer: resb 16
     command_length: resq 1
     input_buffer: resb 256
+    characters_to_skip: resb 1
 section .text
 global _start
 
@@ -23,12 +24,18 @@ _start:
 handle_character: ;dil
     cmp dil, ' '
     jbe .ignore
+    mov rax, [characters_to_skip]
+    cmp rax, 0
+    jg .skip
     mov rcx, [rel command_length]
     lea rax, [rel command_buffer]
     mov [rax + rcx], dil
     inc rcx
     mov [rel command_length], rcx
     call try_interpret_command
+    jmp .ignore
+.skip:
+    sub [characters_to_skip], 1
 .ignore:
     ret
 
@@ -86,6 +93,12 @@ try_interpret_command:
     je .call_less_than
     cmp bl, '>'
     je .call_greater_than
+    cmp bl, '~'
+    je .call_equal_to
+    cmp bl, '!'
+    je .call_not_equal
+    cmp bl, '?'
+    je .call_if
     jmp .not_ready
 .call_assignment:
     mov dil, al
@@ -126,6 +139,20 @@ try_interpret_command:
     mov dil, al
     mov rsi, rcx
     call greater_than
+    jmp .not_ready
+.call_equal_to:
+    mov dil, al
+    mov rsi, rcx
+    call equal_to
+    jmp .not_ready
+.call_not_equal:
+    mov dil, al
+    mov rsi, rcx
+    call not_equal
+    jmp .not_ready
+.call_if:
+    mov dil, al
+    call if
     jmp .not_ready
 .first_char_print:
     cmp bl, 'd'
@@ -561,6 +588,124 @@ greater_than_variable:
     ret
 .return_true:
     mov [variable_values + rdi * 8], 1
+    ret
+
+equal_to:
+    mov r8, rdi
+    mov rdi, rsi
+    call validate_variable_name
+    jc .constant
+    jmp .variable
+.constant:
+    mov rdi, r8
+    call validate_variable_name
+    mov rdi, rax
+    call equal_to_constant
+    jmp .terminate
+.variable:
+    mov rsi, rax
+    mov rdi, r8
+    call validate_variable_name
+    mov rdi, rax
+    call equal_to_variable
+    jmp .terminate
+.terminate:
+    ret
+
+equal_to_constant:
+    cmp rsi, '9'
+    ja .big_digit
+.small_digit:
+    mov rax, rsi
+    sub rax, '0'
+    jmp .assign_value
+.big_digit:
+    mov rax, rsi
+    sub rax, 'A'
+    add rax, 10
+.assign_value:
+    cmp [variable_values + rdi * 8], rax
+    je .return_true
+.return_false:
+    mov [variable_values + rdi * 8], 0
+    ret
+.return_true:
+    mov [variable_values + rdi * 8], 1
+    ret
+
+equal_to_variable:
+    mov rax, [variable_values + rsi * 8]
+    cmp [variable_values + rdi * 8], rax
+    je .return_true
+.return_false:
+    mov [variable_values + rdi * 8], 0
+    ret
+.return_true:
+    mov [variable_values + rdi * 8], 1
+    ret
+
+not_equal:
+    mov r8, rdi
+    mov rdi, rsi
+    call validate_variable_name
+    jc .constant
+    jmp .variable
+.constant:
+    mov rdi, r8
+    call validate_variable_name
+    mov rdi, rax
+    call not_equal_constant
+    jmp .terminate
+.variable:
+    mov rsi, rax
+    mov rdi, r8
+    call validate_variable_name
+    mov rdi, rax
+    call not_equal_variable
+    jmp .terminate
+.terminate:
+    ret
+
+not_equal_constant:
+    cmp rsi, '9'
+    ja .big_digit
+.small_digit:
+    mov rax, rsi
+    sub rax, '0'
+    jmp .assign_value
+.big_digit:
+    mov rax, rsi
+    sub rax, 'A'
+    add rax, 10
+.assign_value:
+    cmp [variable_values + rdi * 8], rax
+    jne .return_true
+.return_false:
+    mov [variable_values + rdi * 8], 0
+    ret
+.return_true:
+    mov [variable_values + rdi * 8], 1
+    ret
+
+not_equal_variable:
+    mov rax, [variable_values + rsi * 8]
+    cmp [variable_values + rdi * 8], rax
+    jne .return_true
+.return_false:
+    mov [variable_values + rdi * 8], 0
+    ret
+.return_true:
+    mov [variable_values + rdi * 8], 1
+    ret
+
+if:
+    call validate_variable_name
+    mov rcx, [variable_values + rax * 8]
+    test rcx, rcx
+    jnz .terminate
+.skip_instruction:
+    mov [characters_to_skip], 3
+.terminate:
     ret
 
 print_decimal_variable:
