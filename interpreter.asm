@@ -11,22 +11,94 @@ section .bss
     command_length: resq 1
     input_buffer: resb 256
     characters_to_skip: resb 1
+    label_positions: resq 46
+    label_defined: resb 46
+    label_scan_buffer: resb 3
+    label_scan_length: resq 1
 section .text
 global _start
 
 _start:
-    PROCESS_SOURCE file_name, handle_character
+    lea rdi, [rel file_name]
+    call source_load
+    test rax, rax
+    js .exit_error
 
-    mov eax, 60
+    call scan_labels
+    call source_reset
+
+.execute:
+    call source_next
+    cmp eax, SOURCE_EOF
+    je .exit_success
+
+    mov edi, eax
+    call handle_character
+    jmp .execute
+
+.exit_error:
+    mov edi, 1
+    jmp .exit
+
+.exit_success:
     xor edi, edi
+
+.exit:
+    mov eax, 60
     syscall
+
+scan_labels:
+    call source_reset
+    mov qword [rel label_scan_length], 0
+
+.next_character:
+    call source_next
+    cmp eax, SOURCE_EOF
+    je .done
+
+    cmp al, ' '
+    jbe .next_character
+
+    mov rcx, [rel label_scan_length]
+    lea rdx, [rel label_scan_buffer]
+    mov [rdx + rcx], al
+    inc rcx
+    mov [rel label_scan_length], rcx
+
+    cmp rcx, 3
+    jne .next_character
+
+    mov qword [rel label_scan_length], 0
+    cmp byte [rel label_scan_buffer], ':'
+    jne .next_character
+    cmp byte [rel label_scan_buffer + 2], ':'
+    jne .next_character
+
+    call source_get_position
+    mov r9, rax
+
+    movzx edi, byte [rel label_scan_buffer + 1]
+    call validate_variable_name
+    jc .next_character
+
+    lea rdx, [rel label_positions]
+    mov [rdx + rax * 8], r9
+    lea rdx, [rel label_defined]
+    mov byte [rdx + rax], 1
+    jmp .next_character
+
+.done:
+    call source_reset
+    mov qword [rel command_length], 0
+    ret
 
 handle_character: ;dil
     cmp dil, ' '
     jbe .ignore
-    mov rax, [characters_to_skip]
-    cmp rax, 0
-    jg .skip
+
+    cmp byte [rel characters_to_skip], 0
+    ja .skip
+
     mov rcx, [rel command_length]
     lea rax, [rel command_buffer]
     mov [rax + rcx], dil
@@ -34,8 +106,10 @@ handle_character: ;dil
     mov [rel command_length], rcx
     call try_interpret_command
     jmp .ignore
+
 .skip:
-    sub [characters_to_skip], 1
+    dec byte [rel characters_to_skip]
+
 .ignore:
     ret
 
@@ -77,6 +151,10 @@ try_interpret_command:
     mov qword[rel command_length], 0
     cmp al, '#'
     je .first_char_print
+    cmp al, ':'
+    je .not_ready
+    cmp al, '@'
+    je .call_goto
     cmp bl, '='
     je .call_assignment
     cmp bl, '+'
@@ -100,54 +178,58 @@ try_interpret_command:
     cmp bl, '?'
     je .call_if
     jmp .not_ready
+.call_goto:
+    mov dil, bl
+    call goto_label
+    jmp .not_ready
 .call_assignment:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call assignment
     jmp .not_ready
 .call_plus:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call plus
     jmp .not_ready
 .call_minus:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call minus
     jmp .not_ready
 .call_multiply:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call multiply
     jmp .not_ready
 .call_division:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call division
     jmp .not_ready
 .call_modulo:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call modulo
     jmp .not_ready
 .call_less_than:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call less_than
     jmp .not_ready
 .call_greater_than:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call greater_than
     jmp .not_ready
 .call_equal_to:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call equal_to
     jmp .not_ready
 .call_not_equal:
     mov dil, al
-    mov rsi, rcx
+    movzx esi, cl
     call not_equal
     jmp .not_ready
 .call_if:
@@ -175,6 +257,21 @@ try_interpret_command:
     call print_char_variable
     jmp .not_ready
 .not_ready:
+    ret
+
+goto_label:
+    call validate_variable_name
+    jc .terminate
+
+    lea rdx, [rel label_defined]
+    cmp byte [rdx + rax], 0
+    je .terminate
+
+    lea rdx, [rel label_positions]
+    mov rdi, [rdx + rax * 8]
+    call source_set_position
+
+.terminate:
     ret
 
 assignment:
@@ -217,7 +314,7 @@ assignment:
 assignment_variable:
     mov rax, [variable_values + rsi*8]
     mov [variable_values + rdi*8], rax
-    mov [variable_used + rdi], 1
+    mov byte [variable_used + rdi], 1
     ret
 
 assignment_input:
@@ -519,10 +616,10 @@ less_than_constant:
     cmp [variable_values + rdi * 8], rax
     jl .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 less_than_variable:
@@ -530,10 +627,10 @@ less_than_variable:
     cmp [variable_values + rdi * 8], rax
     jl .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 greater_than:
@@ -573,10 +670,10 @@ greater_than_constant:
     cmp [variable_values + rdi * 8], rax
     jg .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 greater_than_variable:
@@ -584,10 +681,10 @@ greater_than_variable:
     cmp [variable_values + rdi * 8], rax
     jg .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 equal_to:
@@ -627,10 +724,10 @@ equal_to_constant:
     cmp [variable_values + rdi * 8], rax
     je .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 equal_to_variable:
@@ -638,10 +735,10 @@ equal_to_variable:
     cmp [variable_values + rdi * 8], rax
     je .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 not_equal:
@@ -681,10 +778,10 @@ not_equal_constant:
     cmp [variable_values + rdi * 8], rax
     jne .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 not_equal_variable:
@@ -692,10 +789,10 @@ not_equal_variable:
     cmp [variable_values + rdi * 8], rax
     jne .return_true
 .return_false:
-    mov [variable_values + rdi * 8], 0
+    mov qword [variable_values + rdi * 8], 0
     ret
 .return_true:
-    mov [variable_values + rdi * 8], 1
+    mov qword [variable_values + rdi * 8], 1
     ret
 
 if:
@@ -704,7 +801,7 @@ if:
     test rcx, rcx
     jnz .terminate
 .skip_instruction:
-    mov [characters_to_skip], 3
+    mov byte [rel characters_to_skip], 3
 .terminate:
     ret
 
