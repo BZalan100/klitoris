@@ -341,16 +341,21 @@ assignment_input:
     lea rdi, [rel input_buffer]
     mov esi, 256
     call read_word
+    test rax, rax
+    jz .input_failed
     mov rdi, rax
     call parse_int
     test rdx, rdx
     jnz .store
-    mov rax, [rel input_buffer]
+    movzx eax, byte [rel input_buffer]
 .store:
     pop rdi
     push rax
     call get_memory_address
     pop qword [rax]
+    ret
+.input_failed:
+    pop rdi
     ret
 
 assignment_hexadecimal:
@@ -747,7 +752,7 @@ not_equal_variable:
     xchg rdi, rsi
     call get_memory_address
     cmp rcx, [rax]
-    sete cl
+    setne cl
     movzx ecx, cl
     mov [rax], rcx
     ret
