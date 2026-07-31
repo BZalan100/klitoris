@@ -5,8 +5,8 @@ section .data
     file_name: db "testcode.txt", 0
 
 section .bss
-    variable_values: resq 46
-    variable_used: resb 46
+    variable_values: resq 46 * 16
+    variable_indices: resq 46
     command_buffer: resb 16
     command_length: resq 1
     input_buffer: resb 256
@@ -46,6 +46,15 @@ _start:
 .exit:
     mov eax, 60
     syscall
+
+get_memory_address:
+    mov r8, [variable_indices + rdi*8]
+    shl rdi, 7
+    shl r8, 3
+    add rdi, r8
+    lea rax, [rel variable_values]
+    add rax, rdi
+    ret
 
 scan_labels:
     call source_reset
@@ -177,6 +186,8 @@ try_interpret_command:
     je .call_not_equal
     cmp bl, '?'
     je .call_if
+    cmp bl, '['
+    je .call_at
     jmp .not_ready
 .call_goto:
     mov dil, bl
@@ -235,6 +246,11 @@ try_interpret_command:
 .call_if:
     mov dil, al
     call if
+    jmp .not_ready
+.call_at:
+    mov dil, al
+    movzx esi, cl
+    call at_operator
     jmp .not_ready
 .first_char_print:
     cmp bl, 'd'
@@ -312,271 +328,236 @@ assignment:
     ret
 
 assignment_variable:
-    mov rax, [variable_values + rsi*8]
-    mov [variable_values + rdi*8], rax
-    mov byte [variable_used + rdi], 1
+    xchg rdi, rsi
+    call get_memory_address
+    mov r9, [rax]
+    mov rdi, rsi
+    call get_memory_address
+    mov [rax], r9
     ret
 
 assignment_input:
     push rdi
     lea rdi, [rel input_buffer]
-    mov rsi, 256
+    mov esi, 256
     call read_word
     mov rdi, rax
     call parse_int
     test rdx, rdx
-    jz .lbl1
-    jmp .lbl2
-.lbl1:
-    mov rax, [input_buffer]
-.lbl2:
+    jnz .store
+    mov rax, [rel input_buffer]
+.store:
     pop rdi
-    mov [variable_values + rdi*8], rax
-    mov byte[variable_used + rdi], 1
+    push rax
+    call get_memory_address
+    pop qword [rax]
     ret
 
 assignment_hexadecimal:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    mov [variable_values + rdi * 8], rax
-    mov byte[variable_used + rdi], 1
+    sub rsi, '0'
+    cmp rsi, 9
+    jbe .store
+    sub rsi, 7
+.store:
+    call get_memory_address
+    mov [rax], rsi
     ret
 
 plus:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
+    mov rdi, r8
     jc .constant
-    jmp .variable
-.constant:
-    mov rdi, r8
-    call validate_variable_name
-    mov rdi, rax
-    call plus_constant
-    jmp .terminate
-.variable:
     mov rsi, rax
-    mov rdi, r8
     call validate_variable_name
     mov rdi, rax
-    call plus_variable
-    jmp .terminate
-.terminate:
-    ret
+    jmp plus_variable
+.constant:
+    call validate_variable_name
+    mov rdi, rax
+    jmp plus_constant
 
 plus_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    add [variable_values + rdi * 8], rax
+    movzx ecx, sil
+    sub rcx, '0'
+    cmp rcx, 9
+    jbe .add
+    sub rcx, 7
+.add:
+    call get_memory_address
+    add [rax], rcx
     ret
 
 plus_variable:
-    mov rax, [variable_values + rsi * 8]
-    add [variable_values + rdi * 8], rax
+    xchg rdi, rsi
+    call get_memory_address
+    mov rbx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    add [rax], rbx
     ret
 
 minus:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
+    mov rdi, r8
     jc .constant
-    jmp .variable
-.constant:
-    mov rdi, r8
-    call validate_variable_name
-    mov rdi, rax
-    call minus_constant
-    jmp .terminate
-.variable:
     mov rsi, rax
-    mov rdi, r8
     call validate_variable_name
     mov rdi, rax
-    call minus_variable
-    jmp .terminate
-.terminate:
-    ret
+    jmp minus_variable
+.constant:
+    call validate_variable_name
+    mov rdi, rax
+    jmp minus_constant
 
 minus_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    sub [variable_values + rdi * 8], rax
+    movzx ecx, sil
+    sub rcx, '0'
+    cmp rcx, 9
+    jbe .add
+    sub rcx, 7
+.add:
+    call get_memory_address
+    sub [rax], rcx
     ret
 
 minus_variable:
-    mov rax, [variable_values + rsi * 8]
-    sub [variable_values + rdi * 8], rax
+    xchg rdi, rsi
+    call get_memory_address
+    mov rbx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    sub [rax], rbx
     ret
 
 multiply:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
+    mov rdi, r8
     jc .constant
-    jmp .variable
-.constant:
-    mov rdi, r8
-    call validate_variable_name
-    mov rdi, rax
-    call multiply_constant
-    jmp .terminate
-.variable:
     mov rsi, rax
-    mov rdi, r8
     call validate_variable_name
     mov rdi, rax
-    call multiply_variable
-    jmp .terminate
-.terminate:
-    ret
+    jmp multiply_variable
+.constant:
+    call validate_variable_name
+    mov rdi, rax
+    jmp multiply_constant
 
 multiply_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    mov rcx, [variable_values + rdi * 8]
-    imul rcx, rax
-    mov [variable_values + rdi * 8], rcx
+    movzx ecx, sil
+    sub rcx, '0'
+    cmp rcx, 9
+    jbe .add
+    sub rcx, 7
+.add:
+    call get_memory_address
+    imul rcx, [rax]
+    mov [rax], rcx
     ret
 
 multiply_variable:
-    mov rax, [variable_values + rsi * 8]
-    mov rcx, [variable_values + rdi * 8]
-    imul rcx, rax
-    mov [variable_values + rdi * 8], rcx
+    xchg rdi, rsi
+    call get_memory_address
+    mov rbx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    imul rbx, [rax]
+    mov [rax], rbx
     ret
 
 division:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
+    mov rdi, r8
     jc .constant
-    jmp .variable
-.constant:
-    mov rdi, r8
-    call validate_variable_name
-    mov rdi, rax
-    call division_constant
-    jmp .terminate
-.variable:
     mov rsi, rax
-    mov rdi, r8
     call validate_variable_name
     mov rdi, rax
-    call division_variable
-    jmp .terminate
-.terminate:
-    ret
+    jmp division_variable
+.constant:
+    call validate_variable_name
+    mov rdi, rax
+    jmp division_constant
 
 division_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    mov rbx, rax
-    mov rax, [variable_values + rdi * 8]
+    movzx ecx, sil
+    sub rcx, '0'
+    cmp rcx, 9
+    jbe .add
+    sub rcx, 7
+.add:
+    call get_memory_address
+    push rax
+    mov rax, [rax]
     cqo
-    idiv rbx
-    mov [variable_values + rdi * 8], rax
+    idiv rcx
+    mov r8, rax
+    pop rax
+    mov [rax], r8
     ret
 
 division_variable:
-    mov rax, [variable_values + rdi * 8]
-    mov rbx, [variable_values + rsi * 8]
+    call get_memory_address
+    mov r9, rax
+    mov rdi, rsi
+    call get_memory_address
+    mov r10, rax
+    mov rax, [r9]
+    mov rbx, [r10]
     cqo
     idiv rbx
-    mov [variable_values + rdi * 8], rax
+    mov [r9], rax
     ret
 
 modulo:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
+    mov rdi, r8
     jc .constant
-    jmp .variable
-.constant:
-    mov rdi, r8
-    call validate_variable_name
-    mov rdi, rax
-    call modulo_constant
-    jmp .terminate
-.variable:
     mov rsi, rax
-    mov rdi, r8
     call validate_variable_name
     mov rdi, rax
-    call modulo_variable
-    jmp .terminate
-.terminate:
-    ret
+    jmp modulo_variable
+.constant:
+    call validate_variable_name
+    mov rdi, rax
+    jmp modulo_constant
 
 modulo_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    mov rbx, rax
-    mov rax, [variable_values + rdi * 8]
+    movzx ecx, sil
+    sub rcx, '0'
+    cmp rcx, 9
+    jbe .add
+    sub rcx, 7
+.add:
+    call get_memory_address
+    push rax
+    mov rax, [rax]
     cqo
-    idiv rbx
-    mov [variable_values + rdi * 8], rdx
+    idiv rcx
+    mov r8, rdx
+    pop rax
+    mov [rax], r8
     ret
 
 modulo_variable:
-    mov rax, [variable_values + rdi * 8]
-    mov rbx, [variable_values + rsi * 8]
+    call get_memory_address
+    mov r9, rax
+    mov rdi, rsi
+    call get_memory_address
+    mov r10, rax
+    mov rax, [r9]
+    mov rbx, [r10]
     cqo
     idiv rbx
-    mov [variable_values + rdi * 8], rdx
+    mov [r9], rdx
     ret
 
 less_than:
@@ -602,35 +583,29 @@ less_than:
     ret
 
 less_than_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    cmp [variable_values + rdi * 8], rax
-    jl .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    movzx ecx, sil
+    sub ecx, '0'
+    cmp ecx, 9
+    jbe .compare
+    sub ecx, 7
+.compare:
+    call get_memory_address
+    cmp qword [rax], rcx
+    setl cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 less_than_variable:
-    mov rax, [variable_values + rsi * 8]
-    cmp [variable_values + rdi * 8], rax
-    jl .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    xchg rdi, rsi
+    call get_memory_address
+    mov rcx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    cmp [rax], rcx
+    setl cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 greater_than:
@@ -656,35 +631,29 @@ greater_than:
     ret
 
 greater_than_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    cmp [variable_values + rdi * 8], rax
-    jg .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    movzx ecx, sil
+    sub ecx, '0'
+    cmp ecx, 9
+    jbe .compare
+    sub ecx, 7
+.compare:
+    call get_memory_address
+    cmp rcx, qword [rax]
+    setl cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 greater_than_variable:
-    mov rax, [variable_values + rsi * 8]
-    cmp [variable_values + rdi * 8], rax
-    jg .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    xchg rdi, rsi
+    call get_memory_address
+    mov rcx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    cmp rcx, [rax]
+    setl cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 equal_to:
@@ -710,35 +679,29 @@ equal_to:
     ret
 
 equal_to_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    cmp [variable_values + rdi * 8], rax
-    je .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    movzx ecx, sil
+    sub ecx, '0'
+    cmp ecx, 9
+    jbe .compare
+    sub ecx, 7
+.compare:
+    call get_memory_address
+    cmp rcx, qword [rax]
+    sete cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 equal_to_variable:
-    mov rax, [variable_values + rsi * 8]
-    cmp [variable_values + rdi * 8], rax
-    je .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    xchg rdi, rsi
+    call get_memory_address
+    mov rcx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    cmp rcx, [rax]
+    sete cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 not_equal:
@@ -764,40 +727,36 @@ not_equal:
     ret
 
 not_equal_constant:
-    cmp rsi, '9'
-    ja .big_digit
-.small_digit:
-    mov rax, rsi
-    sub rax, '0'
-    jmp .assign_value
-.big_digit:
-    mov rax, rsi
-    sub rax, 'A'
-    add rax, 10
-.assign_value:
-    cmp [variable_values + rdi * 8], rax
-    jne .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    movzx ecx, sil
+    sub ecx, '0'
+    cmp ecx, 9
+    jbe .compare
+    sub ecx, 7
+.compare:
+    call get_memory_address
+    cmp rcx, qword [rax]
+    setne cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 not_equal_variable:
-    mov rax, [variable_values + rsi * 8]
-    cmp [variable_values + rdi * 8], rax
-    jne .return_true
-.return_false:
-    mov qword [variable_values + rdi * 8], 0
-    ret
-.return_true:
-    mov qword [variable_values + rdi * 8], 1
+    xchg rdi, rsi
+    call get_memory_address
+    mov rcx, [rax]
+    xchg rdi, rsi
+    call get_memory_address
+    cmp rcx, [rax]
+    sete cl
+    movzx ecx, cl
+    mov [rax], rcx
     ret
 
 if:
     call validate_variable_name
-    mov rcx, [variable_values + rax * 8]
+    mov rdi, rax
+    call get_memory_address
+    mov rcx, [rax]
     test rcx, rcx
     jnz .terminate
 .skip_instruction:
@@ -805,15 +764,54 @@ if:
 .terminate:
     ret
 
-print_decimal_variable:
-    mov rax, [variable_values + rdi*8]
+at_operator:
+    mov r8, rdi
+    mov rdi, rsi
+    call validate_variable_name
+    jc .constant
+    jmp .variable
+.constant:
+    mov rdi, r8
+    call validate_variable_name
     mov rdi, rax
+    call at_constant
+    jmp .terminate
+.variable:
+    mov rsi, rax
+    mov rdi, r8
+    call validate_variable_name
+    mov rdi, rax
+    call at_variable
+    jmp .terminate
+.terminate:
+    ret
+
+at_constant:
+    movzx ecx, sil
+    sub ecx, '0'
+    cmp ecx, 9
+    jbe .set_index
+    sub ecx, 7
+.set_index:
+    mov [variable_indices + rdi * 8], rcx
+    ret
+
+at_variable:
+    xchg rdi, rsi
+    call get_memory_address
+    mov rax, [rax]
+    mov [variable_indices + rsi * 8], rax
+    ret
+
+print_decimal_variable:
+    call get_memory_address
+    mov rdi, [rax]
     call print_int
     ret
 
 print_char_variable:
-    mov rax, [variable_values + rdi*8]
-    mov rdi, rax
+    call get_memory_address
+    mov rdi, [rax]
     call print_char
     ret
 
