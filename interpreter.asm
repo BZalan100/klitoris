@@ -1,9 +1,6 @@
 %include "source_reader.asm"
 %include "iostream.asm"
 
-section .data
-    file_name: db "testcode.txt", 0
-
 section .bss
     variable_values: resq 46 * 16
     variable_indices: resq 46
@@ -19,7 +16,9 @@ section .text
 global _start
 
 _start:
-    lea rdi, [rel file_name]
+    cmp qword [rsp], 2
+    jb .exit_error
+    mov rdi, [rsp + 16]
     call source_load
     test rax, rax
     js .exit_error
