@@ -265,27 +265,32 @@ try_interpret_command:
 .call_and:
     mov dil, al
     movzx esi, cl
-    call and_operator
+    mov rdx, 0
+    call bit_operator
     jmp .not_ready
 .call_or:
     mov dil, al
     movzx esi, cl
-    call or_operator
+    mov rdx, 1
+    call bit_operator
     jmp .not_ready
 .call_xor:
     mov dil, al
     movzx esi, cl
-    call xor_operator
+    mov rdx, 2
+    call bit_operator
     jmp .not_ready
 .call_shift_left:
     mov dil, al
     movzx esi, cl
-    call bit_shift_left
+    mov rdx, 3
+    call bit_operator
     jmp .not_ready
 .call_shift_right:
     mov dil, al
     movzx esi, cl
-    call bit_shift_right
+    mov rdx, 4
+    call bit_operator
     jmp .not_ready
 .first_char_print:
     cmp bl, 'd'
@@ -843,7 +848,7 @@ at_variable:
     mov [variable_indices + rsi * 8], rax
     ret
 
-and_operator:
+bit_operator:
     mov r8, rdi
     mov rdi, rsi
     call validate_variable_name
@@ -852,169 +857,77 @@ and_operator:
     mov rsi, rax
     call validate_variable_name
     mov rdi, rax
-    jmp and_variable
+    jmp bit_variable
 .constant:
     call validate_variable_name
     mov rdi, rax
-    jmp and_constant
+    jmp bit_constant
 
-and_constant:
+bit_constant:
     movzx ecx, sil
     sub rcx, '0'
     cmp rcx, 9
-    jbe .and
+    jbe .perform
     sub rcx, 7
-.and:
+.perform:
     call get_memory_address
+    cmp rdx, 0
+    je .and
+    cmp rdx, 1
+    je .or
+    cmp rdx, 2
+    je .xor
+    cmp rdx, 3
+    je .left
+    cmp rdx, 4
+    je .right
+    ret
+.and:
     and [rax], rcx
     ret
-
-and_variable:
-    xchg rdi, rsi
-    call get_memory_address
-    mov rbx, [rax]
-    xchg rdi, rsi
-    call get_memory_address
-    and [rax], rbx
-    ret
-
-or_operator:
-    mov r8, rdi
-    mov rdi, rsi
-    call validate_variable_name
-    mov rdi, r8
-    jc .constant
-    mov rsi, rax
-    call validate_variable_name
-    mov rdi, rax
-    jmp or_variable
-.constant:
-    call validate_variable_name
-    mov rdi, rax
-    jmp or_constant
-
-or_constant:
-    movzx ecx, sil
-    sub rcx, '0'
-    cmp rcx, 9
-    jbe .or
-    sub rcx, 7
 .or:
-    call get_memory_address
     or [rax], rcx
     ret
-
-or_variable:
-    xchg rdi, rsi
-    call get_memory_address
-    mov rbx, [rax]
-    xchg rdi, rsi
-    call get_memory_address
-    or [rax], rbx
-    ret
-
-xor_operator:
-    mov r8, rdi
-    mov rdi, rsi
-    call validate_variable_name
-    mov rdi, r8
-    jc .constant
-    mov rsi, rax
-    call validate_variable_name
-    mov rdi, rax
-    jmp xor_variable
-.constant:
-    call validate_variable_name
-    mov rdi, rax
-    jmp xor_constant
-
-xor_constant:
-    movzx ecx, sil
-    sub rcx, '0'
-    cmp rcx, 9
-    jbe .xor
-    sub rcx, 7
 .xor:
-    call get_memory_address
     xor [rax], rcx
     ret
-
-xor_variable:
-    xchg rdi, rsi
-    call get_memory_address
-    mov rbx, [rax]
-    xchg rdi, rsi
-    call get_memory_address
-    xor [rax], rbx
-    ret
-
-bit_shift_left:
-    mov r8, rdi
-    mov rdi, rsi
-    call validate_variable_name
-    mov rdi, r8
-    jc .constant
-    mov rsi, rax
-    call validate_variable_name
-    mov rdi, rax
-    jmp bit_shift_left_variable
-.constant:
-    call validate_variable_name
-    mov rdi, rax
-    jmp bit_shift_left_constant
-
-bit_shift_left_constant:
-    movzx ecx, sil
-    sub rcx, '0'
-    cmp rcx, 9
-    jbe .shift
-    sub rcx, 7
-.shift:
-    call get_memory_address
+.left:
     sal qword [rax], cl
     ret
-
-bit_shift_left_variable:
-    xchg rdi, rsi
-    call get_memory_address
-    mov rcx, [rax]
-    xchg rdi, rsi
-    call get_memory_address
-    sal qword [rax], cl
-    ret
-
-bit_shift_right:
-    mov r8, rdi
-    mov rdi, rsi
-    call validate_variable_name
-    mov rdi, r8
-    jc .constant
-    mov rsi, rax
-    call validate_variable_name
-    mov rdi, rax
-    jmp bit_shift_right_variable
-.constant:
-    call validate_variable_name
-    mov rdi, rax
-    jmp bit_shift_right_constant
-
-bit_shift_right_constant:
-    movzx ecx, sil
-    sub rcx, '0'
-    cmp rcx, 9
-    jbe .shift
-    sub rcx, 7
-.shift:
-    call get_memory_address
+.right:
     sar qword [rax], cl
     ret
 
-bit_shift_right_variable:
+bit_variable:
     xchg rdi, rsi
     call get_memory_address
     mov rcx, [rax]
     xchg rdi, rsi
     call get_memory_address
+    cmp rdx, 0
+    je .and
+    cmp rdx, 1
+    je .or
+    cmp rdx, 2
+    je .xor
+    cmp rdx, 3
+    je .left
+    cmp rdx, 4
+    je .right
+    ret
+.and:
+    and [rax], rcx
+    ret
+.or:
+    or [rax], rcx
+    ret
+.xor:
+    xor [rax], rcx
+    ret
+.left:
+    sal qword [rax], cl
+    ret
+.right:
     sar qword [rax], cl
     ret
 
